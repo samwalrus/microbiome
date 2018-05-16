@@ -1,5 +1,6 @@
 :-dynamic(class/2).
 %:-consult(otu_classes).
+%:-consult(prolog_terms_for_bags).
 
 otu_tax_list(OTU,Taxlist):-
 	%otu_tax(OTU,'Kingdom',Kingdom), %not needed
@@ -348,3 +349,184 @@ write_bagsizes(File,Class):-
 			   forall((otu_class(Otu,Class),otu_mostspecifictax(Otu,T),setof(Img,Otutax^otu_otutax_img(Otu,Otutax,Img,T),Imgs),length(Imgs,L)),
 				  format(Out,"OTU=~w, BagSize,~w, Class,~w,MostspecificTax,~w~n",[Otu,L,Class,T])),
 			   close(Out)).
+
+
+write_prologterms(File,Class):-
+	setup_call_cleanup(open(File, write, Out, [encoding(utf8)]),
+			   forall((otu_class(Otu,Class),otu_mostspecifictax(Otu,T),setof(Img,Otutax^otu_otutax_img(Otu,Otutax,Img,T),Imgs),length(Imgs,L)),
+				  (
+				      Term =..[instance,Otu,Imgs,Class],
+				      write_term(Out,Term,[fullstop(true),nl(true),quoted(true)])
+				  )),
+
+			   close(Out)).
+
+
+
+
+write_attributes(File,Class):-
+	setup_call_cleanup(open(File, write, Out, [encoding(utf8)]),
+			   (
+			   format(Out,"OtuId,",[]),
+			   once(img_data(I1,_,_)),
+			   forall(img_data(I1,Header,_),format(Out,"~w,",[Header])),
+			   format(Out,"Class~n",[]),
+			   forall((otu_class(Otu,Class),otu_mostspecifictax(Otu,T),setof(Img,Otutax^otu_otutax_img(Otu,Otutax,Img,T),Imgs)),
+				  forall(member(I,Imgs),myprintimg(Out,Otu,Class,I))
+				 )),
+			   close(Out)).
+
+myprintimg(Out,Otu,Class,I):-
+	format(Out,"~w,",[Otu]),
+	forall(img_data(I,_C,V),format(Out,"~w,",[V])),
+	format(Out,"~w~n",[Class]).
+
+
+discrete_attributes_we_want(List):-
+	List = ['Biotic Relationships','Cell Arrangement','Cell Shape','Clade','Diseases', 'Ecosystem','Ecosystem Category','Ecosystem Subtype','Ecosystem Type','Ecotype', 'Energy Source','Gram Staining','Habitat','Metabolism','Motility','Oxygen Requirement','Phenotype','Salinity','Sample Body Site',
+'Sporulation','Temperature Range'].
+
+
+continuous_attributes_we_want(List):-
+	List= ['Genome Size', 'Gene Count','Scaffold Count','w/ Func Pred % ','COG % ', 'KOG % ', 'KEGG % '].
+
+
+class_classpn(les,pos).
+class_classpn(nonles,neg).
+class_classpn(both,neg).
+
+allpositive_Otus(PosOtus):-
+	findall(O,(instance(O,_,C),class_classpn(C,pos)),PosOtus).
+
+allnegative_Otus(NegOtus):-
+	findall(O,(instance(O,_,C),class_classpn(C,neg)),NegOtus).
+
+
+%simple way(makes irrelvant features
+attribute_featurelist(A,FL):-
+	setof(V,I^img_data(I,A,V),Vs),
+	maplist(attribute_featurevalue_equal(A),Vs,FL1),
+	maplist(attribute_featurevalue_notequal(A),Vs,FL2),
+	append(FL1,FL2,FL).
+
+attribute_featurevalue_equal(A,F,f(=,A,F)).
+attribute_featurevalue_notequal(A,F,f(\=,A,F)).
+%simple way
+make_features(NumberedFeatures):-
+	discrete_attributes_we_want(List),
+	maplist(attribute_featurelist,List,FL),
+	flatten(FL,Flat),
+	length(Flat,L),
+	numlist(1,L,NumList),
+	maplist(addnumber,NumList,Flat,NumberedFeatures).
+
+addnumber(Number,Feature1,Feature2):-
+	Feature1 =f(Op,Att,Value),
+	Feature2 =f(Number,Op,Att,Value).
+
+
+
+write_features(File):-
+	make_features(Features),
+	setup_call_cleanup(open(File, write, Out, [encoding(utf8)]),
+			   forall(member(F,Features), write_term(Out,F,[fullstop(true),nl(true),quoted(true)])),
+
+			   close(Out)).
+
+instance_feature_value(I,f(N,=,At,AtV),f(N,1)):-
+	img_data(I,At,AtV).
+instance_feature_value(I,f(N,=,At,AtV1),f(N,0)):-
+	img_data(I,At,AtV2),
+	dif(AtV1,AtV2).
+instance_feature_value(I,f(N,\=,At,AtV),f(N,0)):-
+	img_data(I,At,AtV).
+instance_feature_value(I,f(N,\=,At,AtV1),f(N,1)):-
+	img_data(I,At,AtV2),
+	dif(AtV1,AtV2).
+
+%out of stacks
+write_instances_with_features(File):-
+	make_features(Features),
+	setup_call_cleanup(open(File, write, Out, [encoding(utf8)]),
+			   forall(instance(Otu,Instances,Class),
+				  (
+				      maplist(thing(Features),Instances,Fvs),
+				      class_classpn(Class,Class2),
+				      F = instance(Otu,Fvs,Class2),
+				      write_term(Out,F,[fullstop(true),nl(true),quoted(true)]))),
+
+			   close(Out)).
+
+thing(Features,I,FVs):-
+	maplist(instance_feature_value(I),Features,FVs).
+
+
+
+write_instances_with_features2(File):-
+	make_features(Features),
+	setup_call_cleanup(open(File, write, Out, [encoding(utf8)]),
+			   forall(instance(Otu,Instances,Class),
+				  (
+				      printOtu(Out,Otu),
+				      printinstances(Out,Features,Instances),
+				      printclass(Out,Class)
+				  )
+
+				      ),
+
+			   close(Out)).
+
+
+printOtu(Out,Otu):-
+	format(Out,"instance(~w,",[Otu]).
+printinstances(Out,Features,Instances):-
+	format(Out,"[",[]),
+	forall(member(M,Instances),print_instance(Out,Features,M)),
+	format(Out,"Dummy2",[]),
+	format(Out,"],~n",[]).
+
+print_instance(Out,Features,M):-
+	format(Out,"[",[]),
+	format(Out,"~w,",[M]),
+	forall(member(F,Features),print_feature_value(Out,F,M)),
+	format(Out,"DUMMY",[]),
+	format(Out,"],",[]).
+
+print_feature_value(Out,F,M):-
+	instance_feature_value(M,F,FV),
+	format(Out,"~w,",[FV]).
+
+
+printclass(Out,Class):-
+	class_classpn(Class,ClassPN),
+	format(Out,"~w).~n",[ClassPN]).
+
+
+write_instances_with_features_randomfeatures(File):-
+	make_features(Features),
+	random_features(40,Features,Randoms),
+	setup_call_cleanup(open(File, write, Out, [encoding(utf8)]),
+			   forall(instance(Otu,Instances,Class),
+				  (
+				      printOtu(Out,Otu),
+				      printinstances(Out,Randoms,Instances),
+				      printclass(Out,Class)
+				  )
+
+				      ),
+
+			   close(Out)).
+
+random_features(HowMany,Features,Random):-
+	fail.
+
+positives_attribute_featurelist(P,A,FL).
+
+
+
+
+
+
+
+
+
